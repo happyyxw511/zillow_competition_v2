@@ -6,7 +6,7 @@ from sklearn.preprocessing import LabelEncoder
 
 import tensorflow as tf
 from tensorflow.contrib import layers
-from tensorflow.contrib import learn
+import numpy as np
 from tensorflow.contrib.learn.python.learn.learn_io import pandas_io
 data_path = '../data/'
 train_properties = pd.read_csv(data_path + 'train_properties.csv', index_col=False)
@@ -90,20 +90,42 @@ def preprocess_pandas(features_df):
     return features
 
 
-def construct_network(features):
-    # Deep Neural Network
-    prediction = layers.stack(features, layers.fully_connected, [10, 20, 1],
-        activation_fn=tf.tanh)
+def _mlp_layer(name, input_size, output_size, input):
+    with tf.variable_scope(name):
+        weight = tf.get_variable('weight', shape=[input_size, output_size], dtype=tf.float64, initializer=tf.truncated_normal_initializer())
+        bias = tf.get_variable('bias', shape=[output_size], dtype=tf.float64, initializer=tf.zeros_initializer())
+        return tf.multiply(input, weight) + bias
 
-def fit(prediction, train_y, train_x):
-    target = tf.cast(train_y, tf.float64)
-    prediction = tf.cast(prediction, tf.float64)
-    loss = tf.reduce_mean(tf.square(prediction - target))
-    train_op = layers.optimize_loss(loss,
-        tf.contrib.framework.get_global_step(), optimizer='Adam', learning_rate=0.01)
 
-    return prediction, loss, train_op
+def construct_network(input, layers):
+    """
+    layers are a list of number, the length is the depth of the layer and the number is the layer's size
+    :param input:
+    :param layers:
+    :return:
+    """
+    # layer one
+    with tf.variable_scope('feedforward_network'):
+        input_shape = input.get_shape().as_list()
+        layer_name = 'layer_{}'
+        input_size = input_shape[1]
+        for index, output_size in enumerate(layers):
+            name = layer_name.format(index)
+            layer = _mlp_layer(name, input_size, output_size, input)
+            input = layer
+            input_size = output_size
+        return input
 
+
+
+def construct_train_graph(network, y):
+    loss = tf.reduce_mean(tf.square(network - y))
+    optimizer = tf.train.AdamOptimizer()
+    return optimizer.minimize(loss)
+
+def train_loop(input_X, input_Y, optimizer_op, batch_size, num_epoch, num_items):
+    for epoch in xrange(num_epoch):
+        num_iters = np.floor(num_items / batch_size)
 
 X = train_properties[categorical_vars + continuous_vars].fillna(0)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -118,6 +140,18 @@ for var in categorical_vars:
     X_train.pop(var)
     X_test.pop(var)
     categorical_var_encoders[var] = le
+
+
+input_X = tf.placeholder(dtype=tf.float64)
+input_Y = tf.placeholder(dtype=tf.float64)
+layers = [30, 20, 30]
+network = construct_network(input, layers)
+optimizer_po = construct_train_graph(network, input_Y)
+with tf.Session() as sess:
+    sess.run(optimizer_po, feed_dict={
+        input_X: X_train,
+        input_Y: y_train
+    })
 
 
 classifier.fit(input_fn=pandas_io.pandas_input_fn(X_train, y_train, num_epochs=10))
